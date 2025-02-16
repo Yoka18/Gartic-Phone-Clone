@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gartic Phone - Oda</title>
+    <style>
+        .canvas-container {
+            display: inline-block;
+            margin: 10px;
+            border: 1px solid black;
+        }
+        canvas {
+            border: 1px solid black;
+        }
+    </style>
+</head>
+<body>
+    <button id="clearCanvasBtn">Temizle</button>
+    <div id="canvas-container"></div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const canvasContainer = document.getElementById('canvas-container');
+        const clearCanvasBtn = document.getElementById('clearCanvasBtn');
+        const urlParams = new URLSearchParams(window.location.search);
+        const roomId = urlParams.get('roomId');
+        let canvases = {};
+
+        if (!roomId) {
+            alert('Oda ID bulunamadı!');
+            window.location.href = '/';
+        }
+
+        socket.on('connect', () => {
+            if (roomId) {
+                socket.emit('joinRoom', roomId);
+                socket.emit('getRoomUsers', roomId); // Önemli: Bağlantı kurulunca kullanıcıları al
+            }
+        });
+
+        socket.on('disconnect', () => {
+            alert("Bağlantı koptu!");
+            window.location.href = '/';
+        });
+
+        socket.on('roomUsers', (users) => {
+            console.log("Odadaki kullanıcılar:", users); // Konsola yazdırarak kontrol edin
+            canvasContainer.innerHTML = ''; // Önceki canvasları temizle
+            canvases = {};
+            for (const userId in users) {
+                createCanvas(userId);
+            }
+        });
+
+        socket.on('userJoined', (userId) => {
+            createCanvas(userId);
+        });
+
+        socket.on('userLeft', (userId) => {
+            if (canvases[userId]) {
+                canvasContainer.removeChild(canvases[userId].canvasDiv);
+                delete canvases[userId];
+            }
+        });
+
+        function createCanvas(userId) {
+            if (canvases[userId]) return;
+
+            const canvasDiv = document.createElement('div');
+            canvasDiv.className = 'canvas-container';
+            const canvas = document.createElement('canvas');
+            canvas.id = `canvas-${userId}`;
+            canvas.width = 300;
+            canvas.height = 200;
+            canvasDiv.appendChild(canvas);
+            canvasContainer.appendChild(canvasDiv);
+
+            const ctx = canvas.getContext('2d');
+            canvases[userId] = { canvas: canvas, ctx: ctx, canvasDiv: canvasDiv };
+
+            // Çizim olayları (aynı kalabilir)
+            let isDrawing = false;
+            let lastX = 0;
+            let lastY = 0;
+
+            canvas.addEventListener('mousedown', (e) => {
+                isDrawing = true;
+                lastX = e.offsetX;
+                lastY = e.offsetY;
+            });
+
+            canvas.addEventListener('mousemove', (e) => {
+                if (!isDrawing) return;
+                ctx.beginPath();
+                ctx.moveTo(lastX, lastY);
+                ctx.lineTo(e.offsetX, e.offsetY);
+                ctx.stroke();
+                socket.emit('draw', { x1: lastX, y1: lastY, x2: e.offsetX, y2: e.offsetY, userId: socket.id }, roomId);
+                lastX = e.offsetX;
+                lastY = e.offsetY;
+            });
+
+            canvas.addEventListener('mouseup', () => isDrawing = false);
+            canvas.addEventListener('mouseout', () => isDrawing = false);
+        }
+
+        // Diğer socket olayları (aynı kalabilir)
+        socket.on('drawing', (data) => {
+            if (canvases[data.userId]) {
+                canvases[data.userId].ctx.beginPath();
+                canvases[data.userId].ctx.moveTo(data.x1, data.y1);
+                canvases[data.userId].ctx.lineTo(data.x2, data.y2);
+                canvases[data.userId].ctx.stroke();
+            }
+        });
+
+        clearCanvasBtn.addEventListener('click', () => {
+            if (canvases[socket.id]) {
+                canvases[socket.id].ctx.clearRect(0, 0, canvases[socket.id].canvas.width, canvases[socket.id].canvas.height);
+                socket.emit('clearCanvas', roomId, socket.id);
+            }
+        });
+
+        socket.on('canvasCleared', (userId) => {
+            if (canvases[userId]) {
+                canvases[userId].ctx.clearRect(0, 0, canvases[userId].canvas.width, canvases[userId].canvas.height);
+            }
+        });
+
+        socket.on('loadCanvas', (data) => {
+            for (const userId in data) {
+                if (canvases[userId]) {
+                    for (let i = 0; i < data[userId].x1.length; i++) {
+                        canvases[userId].ctx.beginPath();
+                        canvases[userId].ctx.moveTo(data[userId].x1[i], data[userId].y1[i]);
+                        canvases[userId].ctx.lineTo(data[userId].x2[i], data[userId].y2[i]);
+                        canvases[userId].ctx.stroke();
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
